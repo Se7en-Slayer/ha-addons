@@ -1,4 +1,8 @@
-#!/bin/sh
+#!/command/with-contenv sh
+# with-contenv, NOT plain sh: s6-overlay cont-init scripts do not inherit
+# the container environment otherwise, so HERMES_HOME would be unset here
+# and this would silently chown the upstream default /opt/data instead of
+# the add-on volume. Observed exactly that before the shebang was fixed.
 # Make /data owned by hermes before upstream's 01-hermes-setup runs.
 #
 # WHY THIS EXISTS
