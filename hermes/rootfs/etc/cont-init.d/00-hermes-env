@@ -94,8 +94,24 @@ for name, val in wanted.items():
 with open(env_path, "w", encoding="utf-8") as fh:
     fh.write("\n".join(out).rstrip("\n") + "\n")
 
-# NAMES ONLY.
-print("[hermes-env] set from add-on options:", ", ".join(sorted(wanted)))
+# NAMES AND FINGERPRINTS ONLY - never values.
+#
+# The fingerprint exists because an agent reading Supervisor's stored options
+# is one hop from what Hermes actually reads, and a check that reads the wrong
+# file reports confidently on nothing. This line is emitted from inside the
+# container, from the exact bytes written to .env, so it is the live answer.
+#
+# Recipe, so it can be reproduced by hand:
+#     sha256( value.strip().encode("utf-8") ).hexdigest()[:12]
+# Stripped first, because that is what gets written. Shell equivalent:
+#     printf %s "$VALUE" | sha256sum | cut -c1-12
+# printf %s, not echo: echo appends a newline and changes the hash.
+import hashlib
+
+print("[hermes-env] set from add-on options:")
+for name in sorted(wanted):
+    fp = hashlib.sha256(wanted[name].encode("utf-8")).hexdigest()[:12]
+    print(f"[hermes-env]   {name} sha256:{fp}")
 PY
 
 chown hermes:hermes "$HERMES_HOME/.env" 2>/dev/null || true
