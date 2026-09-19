@@ -18,6 +18,23 @@ arch:
   - amd64
   - aarch64
 
+# Read-only view of Home Assistant's /share, so config.yaml can be written from
+# a shell without anything reaching into this add-on's /data.
+#
+# /data is reachable by nothing but this add-on, which is correct and is why
+# there was no way to edit Hermes's configuration at all: the dashboard needs
+# an auth provider it does not have, /addon_configs is not mapped into the
+# Terminal & SSH add-on on this install, and docker exec needs a privileged
+# add-on this project declined on day one.
+#
+# So: the operator writes /share/hermes/config.yaml over SSH, and
+# 00-hermes-env copies it into /data at start. read_only because the add-on
+# never needs to write there, and a mapping that cannot write cannot corrupt
+# the file the operator is editing.
+map:
+  - type: share
+    read_only: true
+
 # The upstream image runs s6-overlay as its own init. Home Assistant must not
 # insert a second one on top of it.
 init: false

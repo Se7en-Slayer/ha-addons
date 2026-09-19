@@ -116,3 +116,37 @@ PY
 
 chown hermes:hermes "$HERMES_HOME/.env" 2>/dev/null || true
 chmod 600 "$HERMES_HOME/.env" 2>/dev/null || true
+
+# --- config.yaml from /share, if the operator has put one there ---
+#
+# Same shape as the .env bridge above: a file the operator can write becomes
+# the source of truth, copied in at start. Absent source = no change, so this
+# is inert until someone opts in by creating the file.
+#
+# It OVERWRITES $HERMES_HOME/config.yaml on every start, which is the point -
+# the file in /share is declarative. Any edit Hermes makes to its own config
+# is replaced at the next restart. That is the same trade as the .env bridge
+# and it needs saying out loud, because the alternative failure - an edit that
+# survives until a restart and then silently vanishes - is much worse to
+# debug. It cost an evening once already.
+SHARED_CONFIG=/share/hermes/config.yaml
+
+if [ -r "$SHARED_CONFIG" ]; then
+    if cp "$SHARED_CONFIG" "$HERMES_HOME/config.yaml" 2>/dev/null; then
+        chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
+        chmod 600 "$HERMES_HOME/config.yaml" 2>/dev/null || true
+        # Fingerprint, not contents: config.yaml holds no secrets today, but it
+        # sits beside files that do, and "prints the file" is a habit that ages
+        # badly. The hash tells you WHICH version landed, which is the only
+        # question a log needs to answer.
+        if [ -x /usr/bin/sha256sum ] || command -v sha256sum >/dev/null 2>&1; then
+            echo "[hermes-env] config.yaml from /share, sha256:$(sha256sum "$SHARED_CONFIG" | cut -c1-12)"
+        else
+            echo "[hermes-env] config.yaml copied from /share"
+        fi
+    else
+        echo "[hermes-env] WARNING: $SHARED_CONFIG exists but could not be copied" >&2
+    fi
+else
+    echo "[hermes-env] no $SHARED_CONFIG; leaving Hermes's own config.yaml alone"
+fi
