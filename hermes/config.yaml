@@ -1,0 +1,45 @@
+# Hermes Agent, wrapped as a Home Assistant add-on.
+#
+# There is deliberately no `image:` key. Its absence is what tells Supervisor to
+# build locally from the Dockerfile in this directory - `need_build` is exactly
+# `ATTR_IMAGE not in self.data`, and it applies to git-repo add-ons as well as
+# local ones.
+
+name: Hermes Agent
+slug: hermes
+description: NousResearch Hermes agent with the Telegram gateway, always-on.
+url: https://github.com/Se7en-Slayer/ha-addons/tree/main/hermes
+
+# Must match the FROM tag in the Dockerfile. Bumping both together is what
+# surfaces an "update available" button in Home Assistant.
+version: "v2026.9.14"
+
+arch:
+  - amd64
+  - aarch64
+
+# The upstream image runs s6-overlay as its own init. Home Assistant must not
+# insert a second one on top of it.
+init: false
+
+# The point of the move: starts at boot with no login, and Supervisor restarts
+# it if the process dies. The watchdog catches a crash; it does NOT catch a
+# Hermes that is running but wedged - that is what the external heartbeat is
+# for, and the two fail differently on purpose.
+boot: auto
+startup: application
+
+# Lets Hermes reach Core at http://supervisor/core/api using the
+# SUPERVISOR_TOKEN injected at each start. No long-lived token to mint, store
+# or rotate, and the credential dies when the add-on restarts.
+homeassistant_api: true
+hassio_api: true
+hassio_role: default
+
+# No ports published. Telegram runs in polling mode - the upstream image ships
+# without python-telegram-bot[webhooks], so webhook mode fails at gateway
+# start, and polling needs no inbound path at all.
+ports: {}
+
+options: {}
+schema: {}
