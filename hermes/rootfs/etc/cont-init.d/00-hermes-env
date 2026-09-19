@@ -132,21 +132,76 @@ chmod 600 "$HERMES_HOME/.env" 2>/dev/null || true
 SHARED_CONFIG=/share/hermes/config.yaml
 
 if [ -r "$SHARED_CONFIG" ]; then
-    if cp "$SHARED_CONFIG" "$HERMES_HOME/config.yaml" 2>/dev/null; then
-        chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
-        chmod 600 "$HERMES_HOME/config.yaml" 2>/dev/null || true
-        # Fingerprint, not contents: config.yaml holds no secrets today, but it
-        # sits beside files that do, and "prints the file" is a habit that ages
-        # badly. The hash tells you WHICH version landed, which is the only
-        # question a log needs to answer.
-        if [ -x /usr/bin/sha256sum ] || command -v sha256sum >/dev/null 2>&1; then
-            echo "[hermes-env] config.yaml from /share, sha256:$(sha256sum "$SHARED_CONFIG" | cut -c1-12)"
-        else
-            echo "[hermes-env] config.yaml copied from /share"
-        fi
-    else
-        echo "[hermes-env] WARNING: $SHARED_CONFIG exists but could not be copied" >&2
-    fi
+    "$PY_BIN" - "$SHARED_CONFIG" "$HERMES_HOME/config.yaml" <<'PY'
+import hashlib, os, shutil, sys
+
+overlay_path, live_path = sys.argv[1], sys.argv[2]
+
+try:
+    import yaml
+except ImportError:
+    print("[hermes-env] WARNING: PyYAML unavailable; overlay NOT applied", file=sys.stderr)
+    raise SystemExit(0)
+
+def merge(base, over):
+    """Deep-merge `over` onto `base`. Scalars and lists replace; dicts recurse.
+
+    An explicit null in the overlay DELETES the key. A plain deep merge can
+    only add or replace, which is not enough here: pinning an auxiliary task
+    to `provider: main` while its old `model:` line survives leaves the task
+    ambiguously pointed at the model it was supposed to stop using. Writing
+
+        auxiliary:
+          approval:
+            provider: main
+            model: null        # remove, do not override
+
+    removes it. `~` and an empty value are the same thing in YAML, so a key
+    you merely wanted to blank must be given an explicit "" instead.
+    """
+    if not isinstance(base, dict) or not isinstance(over, dict):
+        return over
+    out = dict(base)
+    for k, v in over.items():
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = merge(base.get(k), v) if k in base else v
+    return out
+
+try:
+    overlay = yaml.safe_load(open(overlay_path, encoding="utf-8")) or {}
+except Exception as err:
+    print(f"[hermes-env] WARNING: overlay is not valid YAML ({type(err).__name__}); "
+          "live config left untouched", file=sys.stderr)
+    raise SystemExit(0)
+
+if not isinstance(overlay, dict):
+    print("[hermes-env] WARNING: overlay is not a mapping; live config left untouched",
+          file=sys.stderr)
+    raise SystemExit(0)
+
+try:
+    live = yaml.safe_load(open(live_path, encoding="utf-8")) or {} if os.path.exists(live_path) else {}
+except Exception as err:
+    print(f"[hermes-env] WARNING: live config unreadable ({type(err).__name__}); "
+          "overlay NOT applied", file=sys.stderr)
+    raise SystemExit(0)
+
+# Keep one .bak so a bad overlay is recoverable without the backup system.
+if os.path.exists(live_path):
+    shutil.copy2(live_path, live_path + ".bak")
+
+merged = merge(live, overlay)
+with open(live_path, "w", encoding="utf-8") as fh:
+    yaml.safe_dump(merged, fh, sort_keys=False, default_flow_style=False)
+
+fp = hashlib.sha256(open(overlay_path, "rb").read()).hexdigest()[:12]
+print(f"[hermes-env] overlay merged from {overlay_path} "
+      f"sha256:{fp} ({len(overlay)} top-level keys)")
+PY
+    chown hermes:hermes "$HERMES_HOME/config.yaml" 2>/dev/null || true
+    chmod 600 "$HERMES_HOME/config.yaml" 2>/dev/null || true
 else
     echo "[hermes-env] no $SHARED_CONFIG; leaving Hermes's own config.yaml alone"
 fi
