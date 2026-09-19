@@ -1,0 +1,44 @@
+#!/bin/sh
+# Make /data owned by hermes before upstream's 01-hermes-setup runs.
+#
+# WHY THIS EXISTS
+#
+# Home Assistant restores an add-on's data volume with
+# shutil.copytree(), which preserves mode but NOT ownership, so every
+# restored file lands owned by root with mode 0700. Upstream's stage2
+# hook then chowns only targeted paths - $HERMES_HOME itself, and
+# $HERMES_HOME/platforms/pairing - but never the intermediate
+# $HERMES_HOME/platforms. The result is that hermes owns the parent and
+# the child while root owns the directory between them, so the
+# supervised process cannot traverse to its own pairing store:
+#
+#   drwx------ 10000/10000  data/
+#   drwx------ root/root    data/platforms/     <- traversal denied here
+#   drwx------ 10000/10000  data/platforms/pairing/
+#
+#   PermissionError: [Errno 13] Permission denied: '/data/platforms/pairing'
+#
+# That is a seam between two systems, not a fault in either: upstream
+# assumes a Docker volume whose ownership it established itself, and
+# Home Assistant assumes an add-on that writes as root.
+#
+# Runs as root from cont-init.d, and sorts before 01-hermes-setup so
+# upstream's targeted chowns still run afterwards and still win.
+#
+# Idempotent and cheap - a few thousand inodes. Safe on first boot when
+# /data is empty.
+#
+# uid 10000 is not hardcoded here on purpose: upstream's stage2 can
+# remap the hermes user via HERMES_UID/PUID, so resolve the name.
+
+set -eu
+
+HERMES_HOME="${HERMES_HOME:-/opt/data}"
+
+[ -d "$HERMES_HOME" ] || exit 0
+
+if chown -R hermes:hermes "$HERMES_HOME" 2>/dev/null; then
+    echo "[fix-data-perms] $HERMES_HOME now owned by hermes ($(id -u hermes))"
+else
+    echo "[fix-data-perms] WARNING: could not chown $HERMES_HOME; Hermes may fail to write" >&2
+fi
