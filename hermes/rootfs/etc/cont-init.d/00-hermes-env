@@ -43,9 +43,13 @@ opts_path, env_path = sys.argv[1], sys.argv[2]
 
 # add-on option name -> environment variable Hermes reads
 MAP = {
-    "gemini_api_key":    "GEMINI_API_KEY",
-    "anthropic_api_key": "ANTHROPIC_API_KEY",
-    "openai_api_key":    "OPENAI_API_KEY",
+    "gemini_api_key":     "GEMINI_API_KEY",
+    "anthropic_api_key":  "ANTHROPIC_API_KEY",
+    "openai_api_key":     "OPENAI_API_KEY",
+    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+    # GITHUB_TOKEN, not GIT_HUB_TOKEN: the underscored spelling that was in
+    # .env appears nowhere in the Hermes codebase, so it was never read.
+    "github_token":       "GITHUB_TOKEN",
 }
 
 try:
