@@ -1,0 +1,98 @@
+#!/command/with-contenv sh
+# Write API keys from the add-on's Configuration tab into $HERMES_HOME/.env.
+#
+# WHY THIS EXISTS
+#
+# An add-on's /data is reachable by nothing but that add-on, and this box has
+# no SSH or Terminal add-on and no docker socket - so there is no shell route
+# to edit .env. The alternatives were pasting a key into an agent session whose
+# transcript syncs off-device, or committing it to git. Both are leaks; one of
+# them already happened on 2026-09-19.
+#
+# Supervisor stores `password`-typed options in the add-on's options.json,
+# masked in the UI, outside git, and included in add-on backups. This script is
+# the bridge from there into the .env Hermes actually reads. Rotation becomes a
+# form field and a restart.
+#
+# VALUES ARE NEVER LOGGED. Only variable NAMES are printed. A check that
+# reports the presence of a secret must have no branch that can emit it.
+#
+# Empty options are ignored rather than blanking an existing value, so setting
+# one key does not clear the others.
+#
+# with-contenv, not plain sh: cont-init scripts otherwise do not see
+# HERMES_HOME and would write to the upstream default /opt/data.
+
+set -eu
+
+HERMES_HOME="${HERMES_HOME:-/opt/data}"
+OPTIONS=/data/options.json
+
+[ -f "$OPTIONS" ] || { echo "[hermes-env] no options.json; nothing to do"; exit 0; }
+
+PY_BIN=""
+for c in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python; do
+    [ -x "$c" ] && PY_BIN="$c" && break
+done
+[ -n "$PY_BIN" ] || { echo "[hermes-env] no python interpreter found; skipping" >&2; exit 0; }
+
+"$PY_BIN" - "$OPTIONS" "$HERMES_HOME/.env" <<'PY'
+import json, os, re, sys
+
+opts_path, env_path = sys.argv[1], sys.argv[2]
+
+# add-on option name -> environment variable Hermes reads
+MAP = {
+    "gemini_api_key":    "GEMINI_API_KEY",
+    "anthropic_api_key": "ANTHROPIC_API_KEY",
+    "openai_api_key":    "OPENAI_API_KEY",
+}
+
+try:
+    opts = json.load(open(opts_path, encoding="utf-8"))
+except Exception as err:
+    print(f"[hermes-env] could not read options.json: {type(err).__name__}", file=sys.stderr)
+    raise SystemExit(0)
+
+wanted = {}
+for opt_name, env_name in MAP.items():
+    val = opts.get(opt_name)
+    if isinstance(val, str):
+        # .strip() is load-bearing: a key pasted with a trailing space or
+        # newline authenticates nowhere, and the failure is a bare 401 with
+        # nothing to point at. That exact shape cost an afternoon.
+        val = val.strip()
+        if val:
+            wanted[env_name] = val
+
+if not wanted:
+    print("[hermes-env] no key options set; .env left untouched")
+    raise SystemExit(0)
+
+existing = []
+if os.path.exists(env_path):
+    existing = open(env_path, encoding="utf-8", errors="replace").read().splitlines()
+
+out, seen = [], set()
+for line in existing:
+    m = re.match(r"\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
+    name = m.group(1) if m else None
+    if name in wanted:
+        out.append(f"{name}={wanted[name]}")
+        seen.add(name)
+    else:
+        out.append(line)
+
+for name, val in wanted.items():
+    if name not in seen:
+        out.append(f"{name}={val}")
+
+with open(env_path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(out).rstrip("\n") + "\n")
+
+# NAMES ONLY.
+print("[hermes-env] set from add-on options:", ", ".join(sorted(wanted)))
+PY
+
+chown hermes:hermes "$HERMES_HOME/.env" 2>/dev/null || true
+chmod 600 "$HERMES_HOME/.env" 2>/dev/null || true

@@ -36,10 +36,48 @@ homeassistant_api: true
 hassio_api: true
 hassio_role: default
 
-# No ports published. Telegram runs in polling mode - the upstream image ships
-# without python-telegram-bot[webhooks], so webhook mode fails at gateway
-# start, and polling needs no inbound path at all.
-ports: {}
+# Telegram itself needs no inbound path - it runs in polling mode, because the
+# upstream image ships without python-telegram-bot[webhooks] and webhook mode
+# dies at gateway start.
+#
+# 9119 is the built-in web dashboard, published so config.yaml can be edited
+# without shell access to the add-on's /data (nothing but Hermes can reach that
+# directory, which is by design and is why this port exists at all).
+#
+# SECURITY: upstream documents no authentication on the dashboard, and warns
+# only that "opening any port on an internet facing machine is a security
+# risk". Published here it is reachable, unauthenticated, by anything on the
+# LAN, and it can drive the agent - not merely read it.
+#
+# Treat this as temporary. Set the port back to null when the config edit is
+# done; that needs no rebuild, only an add-on options change and a restart.
+#
+# 8642 is the gateway's own API, which the dashboard talks to. Left unpublished
+# deliberately: both processes are in this container, so the dashboard reaches
+# it over loopback and it needs no host mapping.
+ports:
+  "9119/tcp": 9119
+ports_description:
+  "9119/tcp": Hermes web dashboard - UNAUTHENTICATED, publish only while needed
 
-options: {}
-schema: {}
+# API keys, entered on the add-on's Configuration tab.
+#
+# `password` type means Supervisor renders a masked field and stores the value
+# in the add-on's options.json - outside git, outside any agent transcript, and
+# inside add-on backups. 00-hermes-env writes them into /data/.env at start.
+#
+# This exists because there is no other safe route on this box: /data is
+# reachable by nothing but the add-on, there is no SSH or Terminal add-on, and
+# no docker socket. The alternatives were a key in git or a key pasted into an
+# agent session whose transcript syncs off-device.
+#
+# All optional ("?"). An empty field is ignored rather than blanking an
+# existing value, so rotating one key leaves the others alone.
+options:
+  gemini_api_key: ""
+  anthropic_api_key: ""
+  openai_api_key: ""
+schema:
+  gemini_api_key: "password?"
+  anthropic_api_key: "password?"
+  openai_api_key: "password?"

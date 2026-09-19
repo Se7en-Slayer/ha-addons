@@ -18,13 +18,24 @@ FROM nousresearch/hermes-agent:v2026.9.14
 ENV HERMES_HOME=/data
 ENV HERMES_WRITE_SAFE_ROOT=/data
 
+# Bring up the built-in web dashboard on 9119. Without this the s6 service
+# starts and immediately has nothing to serve. It is the only route to edit
+# config.yaml, because an add-on's /data is reachable by nothing but the add-on
+# itself - not by Home Assistant, not by another add-on, not by a shell.
+ENV HERMES_DASHBOARD=1
+
 # Ownership repair, run before upstream's own init hook. See the script header
 # for the full reasoning: Home Assistant restores add-on data with copytree,
 # which drops ownership, and upstream only chowns targeted paths - leaving
 # /data/platforms root-owned between two hermes-owned directories, which the
 # supervised process cannot traverse.
 COPY rootfs/etc/cont-init.d/00-fix-data-perms /etc/cont-init.d/00-fix-data-perms
-RUN chmod +x /etc/cont-init.d/00-fix-data-perms
+
+# Bridges API keys from the add-on's Configuration tab into /data/.env. Sorts
+# after the ownership fix (f < h) and before upstream's 01-hermes-setup, so the
+# keys are in place before anything reads them. Logs names, never values.
+COPY rootfs/etc/cont-init.d/00-hermes-env /etc/cont-init.d/00-hermes-env
+RUN chmod +x /etc/cont-init.d/00-fix-data-perms /etc/cont-init.d/00-hermes-env
 
 # Run the Telegram gateway rather than the interactive CLI. The upstream
 # entrypoint dispatches through s6-overlay, which is why config.yaml sets
